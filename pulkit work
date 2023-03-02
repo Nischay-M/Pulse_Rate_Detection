@@ -1,0 +1,64 @@
+import cv2
+import numpy as np
+import scipy.signal as signal
+
+# Define the region of interest (ROI) on the face where heart rate will be measured
+face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
+roi_color = (0, 255, 0) # green
+roi_top = 150
+roi_bottom = 350
+roi_left = 150
+roi_right = 450
+
+# Set up the video capture device (use 0 for the default camera)
+cap = cv2.VideoCapture(0)
+
+# Define the sampling frequency and buffer size for the heart rate signal
+fps = 30
+buffer_size = fps * 5 # 5 seconds of data
+signal_buffer = np.zeros(buffer_size)
+signal_index = 0
+
+# Define a function to process the ROI and extract the average pixel intensity
+def process_roi(roi):
+    gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
+    return np.mean(gray)
+
+# Start the main loop
+while True:
+    # Read a frame from the camera
+    ret, frame = cap.read()
+
+    # Convert the frame to grayscale
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+
+    # Detect faces in the grayscale frame
+    faces = face_cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=(30, 30), flags=cv2.CASCADE_SCALE_IMAGE)
+
+    # Draw a rectangle around the faces and extract the ROI for heart rate measurement
+    for (x, y, w, h) in faces:
+        cv2.rectangle(frame, (x, y), (x + w, y + h), roi_color, 2)
+        roi = frame[y+roi_top:y+roi_bottom, x+roi_left:x+roi_right]
+
+        # Process the ROI and add the result to the signal buffer
+        intensity = process_roi(roi)
+        signal_buffer[signal_index] = intensity
+        signal_index = (signal_index + 1) % buffer_size
+
+    # Apply a bandpass filter to the signal buffer to remove noise and extract the heart rate frequency
+    b, a = signal.butter(3, [0.7 / (fps / 2), 3.5 / (fps / 2)], btype='band')
+    filtered_signal = signal.filtfilt(b, a, signal_buffer)
+    peak_indices = signal.find_peaks(filtered_signal, height=0.1)[0]
+    heart_rate = len(peak_indices) * 60 / buffer_size * fps
+
+    # Display the frame with the ROI rectangle and heart rate information
+    cv2.putText(frame, f"Heart rate: {int(heart_rate)} BPM", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, roi_color, 2)
+    cv2.imshow('frame', frame)
+
+    # Exit on 'q' key
+    if cv2.waitKey(1) & 0xFF == ord('q'):
+        break
+
+# Clean up resources
+cap.release()
+cv2.destroyAllWindows()
